@@ -1,0 +1,156 @@
+module mb_intro_top (
+    input  logic clk_100MHz,
+    input  logic btn_0,
+    input logic btn[1],
+    output logic spkl,
+    output logic [15:0] led
+);
+
+    //dummy variables
+    logic spi_clk;
+    logic spi_cs;
+    logic spi_mosi;
+    logic spi_miso;
+    logic done;
+    logic error;
+    logic idk;
+  
+    // System Control
+    logic rst;
+    assign rst = btn_0;
+
+    // Audio Pipeline
+    logic tick_44k1;          // 44.1kHz sample clock
+    logic [7:0] audio_sample; // Audio data to PWM
+    logic [7:0] pwm_data;
+    logic clk_50;
+    logic clk_locked;
+
+//        // Instantiate Clock Wizard (auto-named clk_wiz_0 unless renamed)
+    clk_wiz_0 clk_gen_inst (
+        .clk_in1(clk_100MHz),
+        .clk_out1(clk_50),
+        .reset(btn_0),      // Use active-high reset
+        .locked(clk_locked) // Optional: use this to wait for stable clock
+    );
+    
+    // FIFO Control
+    logic fifo_rd_en;
+    logic fifo_empty;
+    logic fifo_full;
+    logic [15:0] fifo_level;
+//    assign fifo_rd_en = tick_44k1 && !fifo_empty;
+    logic fifo_wr_en;
+    // In your top module, modify the FIFO write enable logic:
+//    assign fifo_wr_en = !fifo_full;  // Only write when FIFO has space
+
+    // And modify the read logic:
+    assign fifo_rd_en = tick_44k1 && !fifo_empty;
+    
+     enum logic [12:0]{
+	 INIT,
+	 READBLOCK,
+	 READH_0,
+	 READH_1,
+	 READL_0,
+	 READL_1,
+	 WRITE,
+	 ERROR,
+	 DONE,
+	 RESET,
+	 BUFER_STATE_1,
+	 BUFFER_STATE_2,
+	 SD_INIT
+	} state_r, state_x;
+    
+      testing_music mb_block_i
+       (.clk_100MHz(clk_100MHz),
+//        .gpio_rtl_0_tri_o(led),
+        .reset_rtl_0(~btn_0),      //Note the inversion of the reset button. Buttons are active low, but the MicroBlaze reset is active high
+        .uart_rtl_0_rxd(uart_txd),  //Note the switcheroo between RTX and TXD. This is a common source of confusion in embedded development
+        .uart_rtl_0_txd(uart_rxd) //RXD = Received Data, and TXD = Transmitted Data, but whether data is transmitted or received depeneds on the
+//        .spi_miso(spi_miso),
+//        .spi_mosi(spi_mosi),
+//        .spi_sclk(spi_clk),
+//        .spi_ss(spi_ss)
+);
+
+
+    // ==================== Module Instances ====================
+
+    // Audio Clock Generation (100MHz -> 44.1kHz)
+    audio_clk_gen clkgen (
+        .clk(clk_100MHz),
+        .rst(rst),
+        .tick(tick_44k1)
+    );
+
+    // Audio FIFO Buffer (now simpler)
+    fifo #(
+        .WIDTH(8),
+        .DEPTH(4096)  // 4KB buffer (~92ms at 44.1kHz)
+    ) audio_buffer (
+        .clk(clk_100MHz),
+        .rst(rst),
+        // Write Interface
+        .wr_en(fifo_wr_en),
+        .din(audio_sample),
+        .full(fifo_full),
+        // Read Interface
+        .rd_en(fifo_rd_en),
+        .dout(pwm_data),
+        .empty(fifo_empty),
+        .data_count(fifo_level)
+    );
+
+    // PWM Audio Output
+    pwm_audio pwm (
+        .clk(clk_100MHz),
+        .rst(rst),
+        .audio_sample(pwm_data),
+        .pwm_out(spkl)
+    );
+    
+    sd_starter1  sd_init (
+        .GO(btn[1]),
+        .clk50(clk_50),
+	    .reset(rst),
+	    .address(8'h28),
+	    .ram_we(fifo_wr_en), //RAM write enable
+	    .ram_address(idk), //dummy
+	    .ram_data(audio_sample), 
+	    .ram_op_begun(~fifo_full), //is RAM ready?
+	    .ram_init_error(error), //error initializing
+	    .ram_init_done(done),  //done with reading
+	    .cs_bo(spi_cs), // SPI comms
+	    .sclk_o(spi_clk), // SPI comms
+	    .mosi_o(spi_mosi),  // SPI comms
+	    .miso_i(spi_miso),
+	    .state_r(state_r),
+	    .state_x(state_x)
+   );
+   
+   ila_1 ila (
+         .probe0(state_r),
+         .probe1(state_x),
+         .probe2(fifo_level),
+         .probe3(ram_we),          // Track when SD card tries to write
+         .probe4(audio_sample),    // Verify actual data
+         .probe5(fifo_full),       // Check FIFO status
+         .probe6(btn[1]),         // SD card status
+         .clk(clk_100MHz)
+        );
+
+//assign led[15:12] = state_r[3:0];  // Show FSM state
+assign led[11] = fifo_empty;
+assign led[10] = fifo_full;
+assign led[9] = tick_44k1;
+assign led[8] = spkl;  // PWM output
+assign led[7:0] = fifo_level[7:0];  // Current sample value
+assign led[0] = done;  // Should be 1 after init
+assign led[1] = error; // Should be 0
+assign led[15] = clk_100MHz;
+assign led[14] = rst;
+
+
+endmodule
