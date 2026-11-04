@@ -1,0 +1,37 @@
+import numpy as np
+from scipy.io import wavfile
+
+# Input/output filenames
+input_filename = "6_sec_game.wav"     # Your .wav file
+output_filename = "6_sec_game.coe"     # Output .coe file
+
+# Step 1: Read WAV file
+rate, data = wavfile.read(input_filename)
+
+# Step 2: Check mono
+if data.ndim != 1:
+    raise ValueError("WAV file must be mono (1 channel).")
+
+# Step 3: Check for 8-bit unsigned PCM
+if data.dtype != np.uint8:
+    raise ValueError("Expected 8-bit unsigned PCM WAV file.")
+
+# Step 4: Write .coe file
+with open(output_filename, "w") as f:
+    f.write("memory_initialization_radix = 16;\n")
+    f.write("memory_initialization_vector =\n")
+
+    for i, sample in enumerate(data):
+        hex_val = f"{sample:02X}"  # 8-bit = 2 hex digits
+        if i < len(data) - 1:
+            f.write(hex_val + ",\n")
+        else:
+            f.write(hex_val + ";\n")
+
+# Step 5: Report
+width = 8
+depth = len(data)
+
+print(f"✅ Done! {output_filename} created.")
+print(f"Memory width: {width} bits")
+print(f"Memory depth: {depth} samples")
