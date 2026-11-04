@@ -1,0 +1,66 @@
+module home_screen (
+    input  logic clk,
+    input  logic rst,         // Active-low reset
+    input  logic in,          // Input signal (e.g., key press)
+    input  logic game_over, game_won,
+    input  logic [1:0] sw_i_char, sw_i_lvl,
+    output logic in_home,     // 1 = in home, 0 = in game
+    output logic [1:0] char_select, lvl_select
+);
+
+    typedef enum logic [1:0] {
+        HOME = 2'b00,
+        WAIT_RELEASE = 2'b01,
+        IN_GAME = 2'b10,
+        WAIT_IN_RELEASE = 2'b11
+    } state_t;
+
+    state_t state, next_state;
+
+    // State transition
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)
+            state <= HOME;
+        else
+            state <= next_state;
+    end
+
+    // Next-state logic
+    always_comb begin
+        next_state = state;
+        case (state)
+            HOME: begin
+                if (in)
+                    next_state = WAIT_RELEASE;   // Wait for release to exit home
+            end
+            WAIT_RELEASE: begin
+                if (!in)
+                    next_state = IN_GAME;        // Go into game after release
+            end
+            IN_GAME: begin
+                if (in && (game_over || game_won))
+                    next_state = WAIT_IN_RELEASE; // Enter home, but wait for button release
+            end
+            WAIT_IN_RELEASE: begin
+                if (!in)
+                    next_state = HOME;           // Now fully in home after release
+            end
+        endcase
+    end
+
+    // Output and latch logic
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            in_home <= 1'b1;
+            char_select <= sw_i_char;
+            lvl_select <= sw_i_lvl;
+        end else begin
+            in_home <= (state == HOME || state == WAIT_RELEASE);
+            if (state == HOME) begin
+                char_select <= sw_i_char;
+                lvl_select <= sw_i_lvl;
+            end
+        end
+    end
+
+endmodule
