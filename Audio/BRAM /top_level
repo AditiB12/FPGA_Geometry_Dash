@@ -1,0 +1,45 @@
+module mb_intro_top (
+    input  logic clk_100MHz,
+    input  logic btn_0,       // Active-high reset
+    output logic spkl,        // PWM audio output
+    output logic [15:0] led        // Optional PWM monitor
+);
+
+    // Internal signals
+    logic rst;
+    logic tick;               // 44.1kHz sample tick
+    logic [7:0] audio_sample; // From ROM
+    
+    // Signal assignments
+    assign rst = btn_0;       // Active-high reset
+    assign led[0] = spkl;      // Mirror PWM to LED (optional)
+
+    // Clock divider for 44.1kHz
+    audio_clk_gen clkgen (
+        .clk(clk_100MHz),
+        .rst(rst),
+        .tick(tick)
+    );
+
+    // ROM instance
+    rom_audio rom (
+        .clk(clk_100MHz),
+        .rst(rst),
+        .tick(tick),
+        .sample(audio_sample)
+    );
+
+    // PWM instance (updated ports)
+    pwm_audio pwm (
+        .clk(clk_100MHz),
+        .rst(rst),
+        .audio_sample(audio_sample), // Connect ROM output
+        .pwm_out(spkl)
+    );
+    
+    assign led[15:8] = audio_sample; // View samples on upper LEDs
+    assign led[1] = tick; // Should barely glow (44.1kHz)
+
+
+
+endmodule
