@@ -1,0 +1,208 @@
+module sd_starter1 (
+    input  logic GO,
+	input  logic clk50,
+	input  logic reset,
+	input  logic [31:0] address,
+	output logic ram_we, //RAM write enable
+	output logic [31:0] ram_address,
+	output logic [15:0] ram_data, 
+	input  logic ram_op_begun, //is RAM ready?
+	output logic ram_init_error, //error initializing
+	output logic ram_init_done,  //done with reading
+	output logic cs_bo, // SPI comms
+	output logic sclk_o, // SPI comms
+	output logic mosi_o,  // SPI comms
+	input  logic miso_i, // SPI comms. Note that if you're using this for audio, a lot of these outputs may be unnecessary
+	
+	output enum logic [12:0]{
+	 INIT,
+	 READBLOCK,
+	 READH_0,
+	 READH_1,
+	 READL_0,
+	 READL_1,
+	 WRITE,
+	 ERROR,
+	 DONE,
+	 RESET,
+	 BUFER_STATE_1,
+	 BUFFER_STATE_2,
+	 SD_INIT
+	} state_r, state_x
+);
+
+logic restart = 1'b0; 
+
+parameter			SDHC 				 = 1'b1; //i recommend you leave this as is
+
+logic	[15:0]		sd_error;
+logic [7:0] 		sd_output_data;
+logic [31:0] 		sd_block_addr;
+
+//registers written in 2-always method
+logic [31:0]		ram_addr_r, ram_addr_x;  //word address for memory initialization
+logic [31:0]        MAX_RAM_ADDRESS;
+logic [15:0]		data_r, data_x;
+logic [31:0]        start_addr;
+logic other_reset, sd_busy, sd_data_rdy, sd_continue, sd_read_block, sd_data_next;
+//other_reset is a reset signal I use with the VHDL driver. I use it so that it can be toggled by external input or by FSM.
+
+//assign primary outputs to correct registers
+assign ram_address = ram_addr_r;
+assign ram_data = data_r; 
+assign cur_state = state_r;
+
+always_comb begin
+    //calculate what the starting and ending address is going to be here. minimal code might look like this.
+	start_addr = address;
+	MAX_RAM_ADDRESS = address + 1024;
+end
+
+SdCardCtrl m_sdcard (        .clk_i(clk50), // i would be careful about messing with this module!
+							 .reset_i(other_reset),
+							 .rd_i(sd_read_block),
+							 .wr_i(1'b0), //never write
+							 .continue_i(sd_continue),
+							 .addr_i(sd_block_addr),
+							 .data_i(), //never write
+							 .data_o(sd_output_data),
+							 .busy_o(sd_busy),
+							 .hndShk_o(sd_data_rdy), // byte available
+							 .hndShk_i(sd_data_next), // ask for next byte	
+							 .error_o(sd_error),
+							 .cs_bo(cs_bo),
+							 .sclk_o(sclk_o),
+							 .mosi_o(mosi_o),
+							 .miso_i(miso_i),
+							 .reverse(1'b0));
+							 
+
+always_ff @ (posedge clk50) 
+begin
+	if (reset) begin
+		state_r <= RESET;
+		data_r <= 16'h0000;
+	end
+	else begin
+		state_r <= state_x;
+		data_r <= data_x;
+		ram_addr_r <= ram_addr_x;
+	end
+	
+	if (GO) begin
+	   //do initialization stuff, like loading start and end address
+	   restart <= 1'b1;
+	end
+	
+	if (state_r == INIT) begin
+	   restart <= 1'b0;
+	end
+end
+
+
+always_comb 
+begin
+	//default combinational assignments
+	sd_read_block = 1'b0;
+	sd_continue = 1'b0;
+	sd_data_next = 1'b0;
+	other_reset = 1'b0;
+	ram_we = 1'b0;
+	if (SDHC)//if SDHC mode, then this is block address (note that you need to change VHDL generic)
+		sd_block_addr = ram_addr_r >> 8;
+	else
+		sd_block_addr = ram_addr_r << 1; //in SD mode, this is the *byte* address, change for SDHC 
+	state_x = state_r;
+	data_x = data_r;
+	ram_addr_x = ram_addr_r;
+	ram_init_error = 1'b0;
+	ram_init_done = 1'b0;
+
+	unique case (state_r)
+		INIT: begin
+		    //reset the driver, set your inital address. note that you might need to break this into multiple states.
+			//use an integrated logic analyzer (ILA) to inspect whats happening inside the driver and assess changes you need to make.
+			other_reset = 1'b1;
+			sd_continue = 1'b0;
+		end
+		
+		READBLOCK: begin //send enable to start block read
+			if (sd_block_addr > 32'h00166C2) //done with the whole range
+				state_x = DONE;
+//		    else if (restart == 1'b1)
+//		        state_x = INIT;
+			else begin
+				sd_read_block = 1'b1; //initiate block read
+				if (sd_block_addr != (start_addr >> 8))
+				    sd_continue = 1'b1;
+				if (sd_busy == 1'b1) //sd_busy is raised when the driver has started fetching data
+					state_x = READH_0;
+			end
+		end
+		READH_0: begin //read first byte (higher byte)
+			if (sd_busy == 1'b0) //busy going low signals end of block, read next block
+				state_x = READBLOCK;
+			else if (sd_data_rdy == 1'b1) begin //sd_data_rdy is raised when the driver has produced a byte
+			    data_x[15:8] = sd_output_data;
+				state_x = READH_1;
+			end
+		end
+		READH_1: begin
+			sd_data_next = 1'b1; // ask for another byte
+			if (sd_data_rdy == 1'b0)//moved on to next byte
+				state_x = READL_0;
+		end
+		READL_0: begin //read second byte (lower byte)
+			if (sd_data_rdy == 1'b1) begin //sd_data_rdy is raised when the driver has produced a byte
+			    data_x[7:0] = sd_output_data;
+				state_x = READH_1;
+			end
+		end
+		READL_1: begin
+			sd_data_next = 1'b1; // ask for another byte
+			if (sd_data_rdy == 1'b0) //move on to next byte/write word
+				state_x = WRITE;
+		end
+		WRITE: begin //write 16-bit word, WE=1 and increment ram address
+			if (ram_op_begun == 1'b1) begin //RAM as responded and is ready
+			    ram_we = 1'b1;
+				ram_addr_x = ram_addr_r + 1;
+				state_x = READH_0;
+			end
+		end
+		ERROR: begin
+			ram_init_error = 1'b1;
+		end
+		DONE: begin
+            ram_init_done = 1'b1;
+            if (restart) begin
+                state_x = INIT;  // Full re-init if restart requested
+            end 
+            else begin
+                // Always go back to reading after short delay
+                state_x = READBLOCK;
+                ram_addr_x = start_addr;  // Reset address if needed
+            end
+        end
+		RESET: begin
+		    other_reset = 1'b1;
+		    state_x = DONE;
+		end
+		BUFER_STATE_1: begin
+		    other_reset = 1'b0;
+		    state_x = BUFFER_STATE_2;
+
+		end
+		BUFFER_STATE_2: begin
+		    ram_addr_x = start_addr;
+		end
+		SD_INIT: begin
+		    if ((sd_busy == 1'b0) && (sd_error == 16'h0000)) // basic checks, ensure SD card is reset and idling before proceeding
+				state_x = READBLOCK;
+		     else if (sd_error != 16'h0000)
+		          state_x = ERROR;
+		end
+	endcase 
+end
+	
+endmodule
