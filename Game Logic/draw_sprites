@@ -1,0 +1,473 @@
+module sprite_drawer (
+    input logic vga_clk,
+    input logic [9:0] DrawX, DrawY,
+    input logic blank,
+    output logic [3:0] red, green, blue,
+
+    //Variables for character position, spike position
+    input  logic [9:0] CharX, CharY, Char_size,
+    input  logic [9:0] ObjectX, ObjectY,
+    input logic object_on, 
+    input logic [15:0] offset, lvlEnd,
+    input logic [3:0] object_type,
+    input logic in_home, game_over, game_won, in_spaceship,
+    input logic [1:0] Char_select
+);
+
+// ---------------------------------------------------
+
+	//Home screen
+//	logic [16:0] rom_address_home;
+   logic [3:0] rom_q_home; 	 
+   logic [3:0] red_home, green_home, blue_home; 
+
+    //Width of address signals...?
+
+    // Background ROM
+    logic [18:0] rom_address, rom_address_game_over;
+    logic [8:0] rom_address_progress;
+    logic [3:0] rom_q, rom_q_game_over, rom_q_game_won, rom_q_title;
+    //logic [4:0] rom_q_progress;
+    logic [3:0] palette_red, palette_green, palette_blue, game_over_red, game_over_green, game_over_blue,
+        game_won_red, game_won_green, game_won_blue, title_red, title_green, title_blue,
+        red_progress, green_progress, blue_progress; 
+        //spaceship_bkg_red, spaceship_bkg_green, spaceship_bkg_blue;
+
+    // Character sprite
+    logic [11:0] rom_address_character; //this should be 11
+    logic [2:0] rom_q_character, rom_q_glow;
+    logic [4:0] rom_q_prof, rom_q_prof_spaceship, rom_q_portal, rom_q_progress; //this should be 2 for me     
+    logic [3:0] red_character, green_character, blue_character, red_prof, green_prof, blue_prof,
+        red_spaceship, green_spaceship, blue_spaceship, red_prof_spaceship, green_prof_spaceship, blue_prof_spaceship;
+        //red_glow, green_glow, blue_glow, red_progress, green_progress, blue_progress, red_trail, green_trail, blue_trail;
+    logic character_on;
+    logic is_transparent, spaceship_transparent, prof_transparent, prof_spaceship_transparent, 
+        game_over_txt_transparent, game_won_txt_transparent, title_transparent;
+        //glow_transparent, trail_transparent;
+
+    // Object sprite
+    logic [11:0] rom_address_spike1;
+    logic [2:0] rom_q_spike1, rom_q_block, rom_q_spaceship, rom_q_platform, rom_q_multispike2, rom_q_multispike3; 
+    logic [3:0] red_spike1, green_spike1, blue_spike1, red_block, green_block, blue_block, red_platform, green_platform, blue_platform,
+        red_multispike2, green_multispike2, blue_multispike2, red_multispike3, green_multispike3, blue_multispike3,
+        red_portal, green_portal, blue_portal;
+    logic spike1_transparent, portal_transparent, multispike2_transparent, multispike3_transparent, platform_transparent;
+    
+//    logic could_collide;
+
+    logic negedge_vga_clk;
+    assign negedge_vga_clk = ~vga_clk;
+
+
+// -----------------------------------------------
+
+    // ROM address for background
+    assign rom_address = (DrawY >> 1)*320 + (DrawX >> 1);
+    logic game_over_txt_on, progress_on;
+//  Using a 250x50 -> 500x100
+    assign game_over_txt_on = (DrawX >= 320-240 && DrawX < 320+250  && DrawY >= 150-50 && DrawY < 150+50); 
+    //                                      ^ 250 not used bc i wanna get rid of that stray pixel on the left 
+    assign rom_address_game_over = (((DrawY - 100) >> 1) * 250) + ((DrawX - 70) >> 1); 
+    
+    //Scale up by 19
+    
+    logic [31:0] temp;
+    logic [31:0] progressWidth;
+    always_comb begin 
+        temp = offset * 256;
+        progressWidth = temp/lvlEnd;
+        if(progressWidth >= 256) progressWidth = 256;
+    end
+    
+
+    //320-128=192
+ //   assign progress_on = !in_home && (DrawX >= 192 && (DrawX < (192 + progressWidth)) && DrawY >= 75-8 && DrawY < 75);
+    assign progress_on = 0; //disable progress bar since this vers does not work
+    assign rom_address_progress = (((DrawY - 67) >> 3) * 250) + ((DrawX - 192) >> 3);
+
+    // Character drawing logic
+    //Changed Charsize to 25
+    assign character_on = (DrawX > (CharX - 25) && DrawX < (CharX + 25)  && DrawY > (CharY - 25) && DrawY < (CharY + 25));
+    assign rom_address_character = ((DrawY - (CharY - 25)) * 50) + (DrawX - (CharX - 25)); 
+
+    // Spike 1 drawing logic
+    //assign spike1_on = (DrawX >= 211 && DrawX < 261 && DrawY >= 429 && DrawY < 479); //when spike1_on is actually in frame
+    assign rom_address_spike1 = (DrawY - (ObjectY - 25)) * 50 + (DrawX - (ObjectX - 25));
+    
+    //Menu icons
+    //Restart: is 200x200 on the screen but 50x50 originally. 160, 300. Menu: 480, 300.
+
+    // Transparency
+always_comb begin
+    is_transparent = (red_character == 4'he && green_character == 4'h0 && blue_character == 4'hf);
+    prof_transparent = (red_prof == 4'he && green_prof == 4'h0 && blue_prof == 4'hf);
+    
+    spike1_transparent = (red_spike1 == 4'he && green_spike1 == 4'h0 && blue_spike1 == 4'hf);
+    portal_transparent = (red_portal == 4'he && green_portal == 4'h0 && blue_portal == 4'hf);
+    multispike2_transparent = (red_multispike2 == 4'he && green_multispike2 == 4'h0 && blue_multispike2 == 4'hf);
+    multispike3_transparent = (red_multispike3 == 4'he && green_multispike3 == 4'h0 && blue_multispike3 == 4'hf);
+    platform_transparent = (red_platform == 4'he && green_platform == 4'h0 && blue_platform == 4'hf);
+    
+    spaceship_transparent = (red_spaceship == 4'he && green_spaceship == 4'h0 && blue_spaceship == 4'hf);
+    prof_spaceship_transparent = (red_prof_spaceship == 4'he && green_prof_spaceship == 4'h0 && blue_prof_spaceship == 4'hf);
+    //glow_transparent = (red_glow == 4'he && green_glow == 4'h0 && blue_glow == 4'hf);
+    
+    game_over_txt_transparent = (game_over_red == 4'he && game_over_green == 4'h0 && game_over_blue == 4'hf);
+    game_won_txt_transparent = (game_won_red == 4'he && game_won_green == 4'h0 && game_won_blue == 4'hf);
+    title_transparent = (title_red == 4'he && title_green == 4'h0 && title_blue == 4'hf);
+    //trail_transparent = (red_trail == 4'he && green_trail == 4'h0 && blue_trail == 4'hf);
+    //assign spike2_transparent = (red_spike2 == 4'he && green_spike2 == 4'h0 && blue_spike2 == 4'hf);
+end
+// -----------------------------------------------
+
+    // Drawing output
+always_ff @(posedge vga_clk) begin
+    red <= palette_red; green <= palette_green; blue <= palette_blue;
+    if (blank) begin
+//       if (in_home) begin
+//           // Show home screen background only
+//           if(game_over_txt_on && !title_transparent) begin
+//               red <= title_red;
+//               green <= title_green;
+//               blue <= title_blue;
+//           end else begin
+//               red <= palette_red;
+//               green <= palette_green;
+//               blue <= palette_blue;
+//           end
+//       end else begin
+            //Game drawing logic            
+//            if(!in_home && game_won && game_over_txt_on && !game_won_txt_transparent) begin
+////            if(game_won) begin
+////                if(game_over_txt_on && !game_won_txt_transparent) begin
+//                   red <= game_won_red;
+//                   green <= game_won_green;
+//                   blue <= game_won_blue;
+////               end 
+//                   red <= red_home;
+//                   green <= green_home;
+//                   blue <= blue_home;
+//               end
+            //end else if (!in_home && object_on && !game_over) begin  
+            if (!in_home && object_on && !game_over) begin                             //Remove the elseif after that for the individual sprites
+                if(object_type == 4'h0 && !spike1_transparent) begin 
+                    red <= red_spike1; 
+                    green <= green_spike1; 
+                    blue <= blue_spike1;
+                end else if(object_type == 4'h1) begin 
+                    red <= red_block; 
+                    green <= green_block; 
+                    blue <= blue_block;
+                end else if(object_type == 4'h3 && !platform_transparent) begin 
+                    red <= red_platform; 
+                    green <= green_platform; 
+                    blue <= blue_platform;
+                end else if(object_type == 4'h5 && !multispike2_transparent) begin 
+                    red <= red_multispike2; 
+                    green <= green_multispike2; 
+                    blue <= blue_multispike2;
+                end else if(object_type == 4'h6 && !multispike3_transparent) begin 
+                    red <= red_multispike3; 
+                    green <= green_multispike3; 
+                    blue <= blue_multispike3;
+                end else if(object_type == 4'h8 && !portal_transparent) begin 
+                    red <= red_portal; 
+                    green <= green_portal; 
+                    blue <= blue_portal;
+//                end else if(object_type == 4'h9) begin 
+//                    //Maybe just have it be invisible!! So get rid of this elseif. Reduces the complication of wrapping around.
+//                    red <= 4'h0; 
+//                    green <= 4'hf; 
+//                    blue <= 4'h0;
+//                end else if (character_on && !is_transparent) begin
+//                    red <= red_character; 
+//                    green <= green_character; 
+//                    blue <= blue_character;
+//                end else begin
+//                    red <= palette_red; 
+//                    green <= palette_green; 
+//                    blue <= palette_blue;
+                end
+            end 
+            //end else if chara on
+            if (character_on) begin
+                if(Char_select == 3) begin
+                    if(in_spaceship && !prof_spaceship_transparent) begin
+                        red <= red_prof_spaceship; 
+                        green <= green_prof_spaceship; 
+                        blue <= blue_prof_spaceship;
+                    end else if(!in_spaceship && !prof_transparent) begin 
+                        red <= red_prof; 
+                        green <= green_prof; 
+                        blue <= blue_prof;
+                    end
+                end else if(Char_select != 3) begin
+                    if(in_spaceship && !spaceship_transparent) begin
+                        red <= red_spaceship; 
+                        green <= green_spaceship; 
+                        blue <= blue_spaceship;
+                    end else if(!in_spaceship && !is_transparent) begin 
+                        red <= red_character; 
+                        green <= green_character; 
+                        blue <= blue_character;
+                    end
+                end
+            //end else begin
+            //    red <= palette_red; 
+            //    green <= palette_green; 
+            //    blue <= palette_blue;
+            end 
+            
+            if(game_over_txt_on) begin
+                if (game_over && !game_over_txt_transparent) begin                            
+                    //Right now just show the home again
+                    red <= game_over_red;
+                    green <= game_over_green;
+                    blue <= game_over_blue;
+                    //Could have a collision screen
+                end 
+                else if(in_home && !title_transparent) begin
+                   red <= title_red;
+                   green <= title_green;
+                   blue <= title_blue;
+                end else if(game_won && !game_won_txt_transparent) begin
+                       red <= game_won_red;
+                       green <= game_won_green;
+                       blue <= game_won_blue;
+                end 
+            end
+            
+            
+           if(progress_on) begin
+               red <= red_progress;
+               green <= green_progress;
+               blue <= blue_progress;
+           end
+        end
+    //end
+end
+
+
+// ----------------------------------------------------------
+
+    // ROM + Palette Modules
+    nicer_bkg_rom nicer_bkg_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address), 
+        .douta(rom_q)
+    );
+    nicer_bkg2_palette nicer_bkg2_palette (
+        .index(rom_q), 
+        .game_over(game_over),
+        .red(palette_red), 
+        .green(palette_green), 
+        .blue(palette_blue)
+    );
+    
+//    spaceship_bkg_rom spaceship_bkg_rom (
+//        .clka(negedge_vga_clk), 
+//        .addra(rom_address), 
+//        .douta(rom_q_spaceship_bkg)
+//    );
+//    spaceship_bkg_palette spaceship_bkg_palette (
+//        .index(rom_q), 
+//        .game_over(game_over),
+//        .red(palette_red), 
+//        .green(palette_green), 
+//        .blue(palette_blue)
+//    );
+    
+
+    game_over_txt_rom game_over2_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_game_over), 
+        .douta(rom_q_game_over)
+    );
+    game_over_txt_palette game_over_txt_palette (
+        .index(rom_q_game_over), 
+        .red(game_over_red), 
+        .green(game_over_green), 
+        .blue(game_over_blue)
+    );
+   
+   won_txt_rom won_txt_rom (
+       .clka(negedge_vga_clk), 
+       .addra(rom_address_game_over), 
+       .douta(rom_q_game_won)
+   );
+   won_txt2_palette won_txt2_palette (
+       .index(rom_q_game_won), 
+       .red(game_won_red), 
+       .green(game_won_green), 
+       .blue(game_won_blue)
+   );
+    
+    title_txt title_txt (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_game_over), 
+        .douta(rom_q_title)
+    );
+    title_txt2_palette title_txt2_palette (
+        .index(rom_q_title), 
+        .red(title_red), 
+        .green(title_green), 
+        .blue(title_blue)
+    );
+    
+    progress_rom progress_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_progress), 
+        .douta(rom_q_progress)
+    );
+    progress_fill_palette progress_fill_palette (
+        .index(rom_q_progress), 
+        .red(red_progress), 
+        .green(green_progress), 
+        .blue(blue_progress)
+    );
+    
+//    glow_rom glow_rom (
+//        .clka(negedge_vga_clk), 
+//        .addra(rom_address_character), 
+//        .douta(rom_q_glow)
+//    );
+//    glow_palette glow_palette (
+//        .index(rom_q_glow), 
+//        .red(red_glow), 
+//        .green(green_glow), 
+//        .blue(blue_glow)
+//    );
+
+    alien_rom alien_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_character), 
+        .douta(rom_q_character)
+    );
+    alien_palette alien_palette (
+        .index(rom_q_character), 
+        .red(red_character), 
+        .green(green_character), 
+        .blue(blue_character)
+    );
+    
+    spaceship_rom spaceship_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_character), 
+        .douta(rom_q_spaceship)
+    );
+    alien_spaceship_palette spaceship_palette (
+        .index(rom_q_spaceship), 
+        .red(red_spaceship), 
+        .green(green_spaceship), 
+        .blue(blue_spaceship)
+    );
+    
+    prof_cheng_rom prof_cheng_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_character), 
+        .douta(rom_q_prof)
+    );
+    prof_cheng_palette prof_cheng_palette (
+        .index(rom_q_prof), 
+        .red(red_prof), 
+        .green(green_prof), 
+        .blue(blue_prof)
+    );
+    
+    prof_spaceship_rom prof_spaceship_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_character), 
+        .douta(rom_q_prof_spaceship)
+    );
+    prof_cheng_spaceship_palette prof_spaceship_palette (
+        .index(rom_q_prof_spaceship), 
+        .red(red_prof_spaceship), 
+        .green(green_prof_spaceship), 
+        .blue(blue_prof_spaceship)
+    );
+
+    spike1_rom spike1_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_spike1),
+        .douta(rom_q_spike1)
+    );
+    spike1_palette spike1_palette (
+        .index(rom_q_spike1), 
+        .red(red_spike1), 
+        .green(green_spike1), 
+        .blue(blue_spike1)
+    );
+    
+    multispike2_rom multispike2_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_spike1),
+        .douta(rom_q_multispike2)
+    );
+    multispike2_palette multispike2_palette (
+        .index(rom_q_multispike2), 
+        .red(red_multispike2), 
+        .green(green_multispike2), 
+        .blue(blue_multispike2)
+    );
+
+    multispike3_rom multispike3_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_spike1),
+        .douta(rom_q_multispike3)
+    );
+    multispike3_palette multispike3_palette (
+        .index(rom_q_multispike3), 
+        .red(red_multispike3), 
+        .green(green_multispike3), 
+        .blue(blue_multispike3)
+    );
+
+    platform_rom platform_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_spike1),
+        .douta(rom_q_platform)
+    );
+    platform_palette platform_palette (
+        .index(rom_q_platform), 
+        .red(red_platform), 
+        .green(green_platform), 
+        .blue(blue_platform)
+    );
+
+    blk_mem_gen_0 block_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_spike1),
+        .douta(rom_q_block)
+    );
+    block_palette block_palette (
+        .index(rom_q_block), 
+        .red(red_block), 
+        .green(green_block), 
+        .blue(blue_block)
+    );
+    
+    portal_rom portal_rom (
+        .clka(negedge_vga_clk), 
+        .addra(rom_address_spike1),
+        .douta(rom_q_portal)
+    );
+    portal_palette portal_palette (
+        .index(rom_q_portal), 
+        .red(red_portal), 
+        .green(green_portal), 
+        .blue(blue_portal)
+    );
+    
+//   home_rom home_rom (
+//	.clka   (negedge_vga_clk),
+//	.addra (rom_address),
+//	.douta       (rom_q_home)
+//   );
+//   home2_palette home2_palette (
+//       .index (rom_q_home),
+//       .red   (red_home),
+//       .green (green_home),
+//       .blue  (blue_home)
+//   );
+    
+endmodule
